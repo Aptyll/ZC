@@ -50,7 +50,7 @@ const UPGRADE_MENU = {
         { id: "SUPPLY", name: "Supply Depot", cost: 30, color: "#27ae60", description: "Increases supply limit", hotkey: "W" },
         { id: "SHIELD", name: "Shield Tower", cost: 10, color: "#3498db", description: "Provides +5 armor to nearby units", hotkey: "E" },
         { id: "SENSOR", name: "Sensor Tower", cost: 10, color: "#e67e22", description: "Advanced detection (in development)", hotkey: "R" },
-        { id: "BLD5", name: "TBD Building", color: "#34495e", description: "Future building", hotkey: "T" }
+        { id: "TANK", name: "Tank", cost: 10, color: "rgba(160, 120, 80, 0.8)", description: "Heavily armored structure", hotkey: "T" }
     ],
     // Rest of placeholders remain the same
 };
@@ -108,7 +108,7 @@ const BUILDING_TYPES = {
         autoSpawn: true, // Automatically spawn units
         unitType: 'MARINE',
         maxHealth: 500,
-        armor: 2
+        structureArmor: 1
     },
     SUPPLY: {
         width: 60,
@@ -118,7 +118,7 @@ const BUILDING_TYPES = {
         supplyProvided: 10, // Increases supply limit
         buildTime: 180,
         maxHealth: 300,
-        armor: 1
+        structureArmor: 1
     },
     SHIELD: {
         width: 40,
@@ -128,7 +128,7 @@ const BUILDING_TYPES = {
         shieldRadius: 150, // Radius of shield aura
         armorBonus: 5, // Armor bonus provided by shield aura
         maxHealth: 200,
-        armor: 1
+        structureArmor: 1
     },
     SENSOR: {
         width: 40,
@@ -137,7 +137,15 @@ const BUILDING_TYPES = {
         borderColor: "#d35400",
         sensorRadius: 300, // Twice the radius of shield tower
         maxHealth: 200,
-        armor: 1
+        structureArmor: 1
+    },
+    TANK: {
+        width: 120,
+        height: 40,
+        color: "rgba(160, 120, 80, 0.8)", // Light brown transparent
+        borderColor: "rgba(140, 100, 60, 0.9)", // Slightly darker brown for border
+        maxHealth: 400,
+        structureArmor: 1
     }
 };
 
@@ -195,10 +203,10 @@ const BUILDING_STATS = {
     scroll: 0, // Scroll position
     maxScroll: 0, // Maximum scroll allowed (calculated dynamically)
     scrollSpeed: 10, // Pixels per scroll event
-    stats: ["health", "armor", "spawnRate", "unitType", "isSpawning", "rallySet", "shieldRadius", "armorBonus", "sensorRadius"],
+    stats: ["health", "structureArmor", "spawnRate", "unitType", "isSpawning", "rallySet", "shieldRadius", "armorBonus", "sensorRadius"],
     statLabels: {
         health: "Health",
-        armor: "Armor",
+        structureArmor: "Structure Armor",
         spawnRate: "Production Rate",
         unitType: "Produces",
         isSpawning: "Production",
@@ -249,11 +257,12 @@ class Building {
         this.hovered = false;
         this.spawnTimer = 0;
         this.spawnProgress = 0;
+        this.id = 'building_' + Math.random().toString(36).substr(2, 9); // Add unique ID for multiplayer
         
         // Health and armor
         this.maxHealth = BUILDING_TYPES[type].maxHealth;
         this.currentHealth = this.maxHealth;
-        this.armor = BUILDING_TYPES[type].armor;
+        this.structureArmor = BUILDING_TYPES[type].structureArmor;
         
         // Building-specific properties
         if (type === 'BUNKER') {
@@ -333,13 +342,7 @@ class Building {
             ctx.setLineDash([5, 3]);
             ctx.lineWidth = 2;
             ctx.stroke();
-            ctx.setLineDash([]);
-            
-            // Draw a slight fill for the shield area
-            ctx.fillStyle = 'rgba(52, 152, 219, 0.1)';
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, shieldRadius, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.setLineDash([]); // Reset line dash
         }
         
         // Draw sensor radius if this is a sensor tower (outline only)
@@ -505,7 +508,7 @@ class Building {
     // Method to take damage
     takeDamage(amount) {
         // Apply armor reduction (each armor point reduces damage by 5%)
-        const damageReduction = this.armor * 0.05;
+        const damageReduction = this.structureArmor * 0.05;
         const reducedDamage = amount * (1 - damageReduction);
         
         // Apply damage
@@ -936,24 +939,27 @@ function init() {
     resizeCanvas(canvas);
     const ctx = canvas.getContext('2d');
 
-    // Create initial bunker
-    const bunker = new Building(
-        CANVAS_WIDTH / 2,
-        CANVAS_HEIGHT / 2,
-        'BUNKER'
-    );
-    gameState.buildings.push(bunker);
+    // Check if this is a fresh init (not from multiplayer mode)
+    if (!multiplayer.isConnected) {
+        // Create initial bunker
+        const bunker = new Building(
+            CANVAS_WIDTH / 2,
+            CANVAS_HEIGHT / 2,
+            'BUNKER'
+        );
+        gameState.buildings.push(bunker);
 
-    // Create initial worker unit
-    const worker = new Unit(
-        CANVAS_WIDTH / 2 + 50,
-        CANVAS_HEIGHT / 2 + 50,
-        'WORKER'
-    );
-    gameState.units.push(worker);
-    
-    // Update supply count for the worker
-    SUPPLY_DISPLAY.current++;
+        // Create initial worker unit
+        const worker = new Unit(
+            CANVAS_WIDTH / 2 + 50,
+            CANVAS_HEIGHT / 2 + 50,
+            'WORKER'
+        );
+        gameState.units.push(worker);
+        
+        // Update supply count for the worker
+        SUPPLY_DISPLAY.current++;
+    }
 
     // Event listeners
     canvas.addEventListener('mousedown', handleMouseDown);
@@ -1117,6 +1123,12 @@ function update() {
     
     // Update building stats visibility
     BUILDING_STATS.visible = gameState.selectedBuilding !== null;
+    
+    // If connected in multiplayer mode and we're the host, send updates
+    if (multiplayer.isConnected && multiplayer.isHost) {
+        // We'll let the interval in multiplayer.js handle this
+        // This avoids sending too many updates and flooding the connection
+    }
 }
 
 // Draw game
@@ -1418,6 +1430,16 @@ function drawBuildGrid(ctx, gridX, gridY, menu) {
             ctx.lineTo(cellX + (menu.cellSize - menu.cellPadding) / 2 - 8, cellY + (menu.cellSize - menu.cellPadding) / 2 + 8);
             ctx.closePath();
             ctx.stroke();
+        } else if (building.id === 'TANK') {
+            // Draw tank icon (simple rectangle)
+            ctx.fillStyle = building.color;
+            
+            // Tank body (rectangular shape)
+            ctx.fillRect(
+                cellX + (menu.cellSize - menu.cellPadding) / 2 - 12,
+                cellY + (menu.cellSize - menu.cellPadding) / 2 - 6,
+                24, 12
+            );
         } else {
             // Draw placeholder icon
             ctx.fillStyle = '#576574';
@@ -1873,6 +1895,15 @@ function handleMouseDown(e) {
             gameState.selectedUnits.clear();
         }
     }
+    
+    // If in multiplayer mode and we're the host, sync after significant actions
+    if (multiplayer.isConnected && multiplayer.isHost) {
+        // Only sync after important actions to avoid flooding the connection
+        if (e.button === 0 && !gameState.isDragging) { // Left click without dragging
+            // Send immediate update after a selection change
+            multiplayer.sendGameState();
+        }
+    }
 }
 
 function handleMouseMove(e) {
@@ -1964,10 +1995,30 @@ function handleMouseUp(e) {
     }
     
     gameState.isDragging = false;
+    
+    // If in multiplayer mode and we're the host, sync after selection changes
+    if (multiplayer.isConnected && multiplayer.isHost) {
+        if (gameState.isDragging) {
+            // Send immediate update after a drag selection
+            multiplayer.sendGameState();
+        }
+    }
 }
 
 function handleRightClick(e) {
     e.preventDefault(); // Prevent context menu from appearing
+    
+    // If in multiplayer mode and we're the host, sync after movement commands
+    if (multiplayer.isConnected && multiplayer.isHost) {
+        // Send update after unit movement orders
+        if (gameState.selectedUnits.size > 0) {
+            // Use slight delay to ensure the movement calculation is done
+            setTimeout(() => {
+                multiplayer.sendGameState();
+            }, 50);
+        }
+    }
+    
     return false;
 }
 
@@ -2776,8 +2827,8 @@ function drawBuildingStatsDisplay(ctx) {
                 case 'health':
                     statValue = `${Math.round(building.currentHealth)} / ${building.maxHealth}`;
                     break;
-                case 'armor':
-                    statValue = building.armor.toString();
+                case 'structureArmor':
+                    statValue = building.structureArmor.toString();
                     break;
                 case 'spawnRate':
                     statValue = building.type === 'BUNKER' ? `${building.spawnRate.toFixed(1)}/min` : "N/A";
@@ -2859,41 +2910,37 @@ function drawBuildingStatsDisplay(ctx) {
 
 // Resource income indicator
 function addResourceIncomeIndicator() {
-    // Create a floating +5 text near the resource display
-    // Position it below the resource counter for better visibility
-    const indicator = {
-        x: RESOURCE_DISPLAY.x + RESOURCE_DISPLAY.width / 2,
-        y: RESOURCE_DISPLAY.y + 20, // Position below the resource counter
-        lifetime: 90, // 1.5 seconds
-        opacity: 1,
-        update: function() {
-            this.lifetime--;
-            this.opacity = this.lifetime / 90;
-            this.y -= 0.7; // Float upward slightly faster
-            return this.lifetime > 0;
-        },
-        draw: function(ctx) {
-            // Drop shadow for better visibility
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-            ctx.shadowBlur = 5;
-            
-            // Larger font and bright color
-            ctx.fillStyle = `rgba(46, 204, 113, ${this.opacity})`;
-            ctx.font = 'bold 18px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(`+${gameState.resourceIncomeAmount}`, this.x, this.y);
-            
-            // Reset shadow
-            ctx.shadowBlur = 0;
-        }
-    };
+    // Visual feedback for resource income
+    const indicator = document.createElement('div');
+    indicator.style.position = 'absolute';
+    indicator.style.top = `${RESOURCE_DISPLAY.y - 5}px`;
+    indicator.style.right = `${CANVAS_WIDTH - RESOURCE_DISPLAY.x - RESOURCE_DISPLAY.width}px`;
+    indicator.style.color = '#2ecc71';
+    indicator.style.fontSize = '16px';
+    indicator.style.fontWeight = 'bold';
+    indicator.textContent = `+${gameState.resourceIncomeAmount}`;
+    indicator.style.opacity = '1';
+    indicator.style.transition = 'all 1s ease-out';
+    indicator.style.pointerEvents = 'none'; // Ensure it doesn't interfere with clicks
     
-    // Add to target indicators array (reusing the same system)
-    gameState.targetIndicators.push(indicator);
+    document.body.appendChild(indicator);
     
-    // Play income sound
-    playSound('income');
+    // Animate and remove
+    setTimeout(() => {
+        indicator.style.opacity = '0';
+        indicator.style.transform = 'translateY(-20px)';
+        
+        // Remove from DOM after animation
+        setTimeout(() => {
+            document.body.removeChild(indicator);
+        }, 1000);
+    }, 50);
+    
+    // If in multiplayer mode, sync state after resource change
+    if (multiplayer.isConnected && multiplayer.isHost) {
+        multiplayer.sendGameState();
+    }
 }
 
-// Start the game
-init(); 
+// Don't auto-start the game, let the multiplayer system handle it
+// This replaces the initialization code at the bottom of the file 
